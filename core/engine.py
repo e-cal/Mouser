@@ -5,6 +5,7 @@ Supports per-application auto-switching of profiles.
 """
 
 import sys
+from core.held_modifiers import HeldModifiers, ACTIONS as HOLD_ACTIONS
 import threading
 import time
 from core.mouse_hook import MouseHook, MouseEvent
@@ -122,6 +123,7 @@ class Engine:
         self._replay_inflight = False
         self._replay_pending_rerun = False
         self._replay_lock = threading.Lock()
+        self._held_modifiers = HeldModifiers()
         self._mouse_release_timers = {}   # action_id → Timer for safety auto-release
         self._ring = None                 # ActionsRingController (created in _setup_hooks)
         self._ring_show_cb = None         # UI callback for showing ring overlay
@@ -165,6 +167,7 @@ class Engine:
         write is skipped; the caller is responsible for applying it off the
         HID listener thread (see ``_on_connection_change``).
         """
+        self._held_modifiers.release_all()
         mappings = get_active_mappings(self.cfg)
 
         # Apply scroll inversion settings to the hook
@@ -368,6 +371,19 @@ class Engine:
             events = list(BUTTON_TO_EVENTS.get(btn_key, ()))
             has_paired_down = any(e.endswith("_down") for e in events)
             has_up = any(e.endswith("_up") for e in events)
+
+            if action_id in HOLD_ACTIONS:
+                # Only physical paired buttons can own a held modifier.
+                if has_paired_down and has_up:
+                    for event in events:
+                        self.hook.block(event)
+                        self.hook.register(
+                            event,
+                            lambda e, owner=btn_key, action=action_id,
+                            down=event.endswith("_down"):
+                                self._held_modifiers.set(owner, action, down and self._enabled),
+                        )
+                continue
 
             for evt_type in events:
                 if has_paired_down and evt_type.endswith("_up"):
@@ -1295,6 +1311,8 @@ class Engine:
         ).start()
 
     def _on_connection_change(self, connected):
+        if not connected:
+            self._held_modifiers.release_all()
         connection_changed = connected != self._last_connection_state
         hid_features_ready = self.hid_features_ready
         hid_features_changed = hid_features_ready != self._last_hid_features_ready
@@ -1601,8 +1619,12 @@ class Engine:
 
     def set_enabled(self, enabled):
         self._enabled = bool(enabled)
+        if not self._enabled:
+            self._held_modifiers.release_all()
 
     def set_ui_passthrough(self, enabled):
+        if enabled:
+            self._held_modifiers.release_all()
         if hasattr(self.hook, "set_ui_passthrough"):
             self.hook.set_ui_passthrough(enabled)
 
@@ -1646,3 +1668,4 @@ class Engine:
             self._battery_poll_thread = None
         self._app_detector.stop()
         self.hook.stop()
+        self._held_modifiers.release_all()

@@ -1880,3 +1880,7 @@ else:
             "category": "Other",
         },
     }
+
+
+from core.held_modifiers import ACTIONS as _HOLD_ACTIONS
+ACTIONS.update(_HOLD_ACTIONS)

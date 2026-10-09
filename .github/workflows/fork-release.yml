@@ -1,0 +1,48 @@
+name: Fork macOS release
+on:
+  push:
+    tags: ['fork-v*']
+permissions:
+  contents: write
+jobs:
+  macos:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+            archive: Mouser-macOS.zip
+          - runner: macos-15-intel
+            arch: x86_64
+            archive: Mouser-macOS-intel.zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m compileall -q core
+      - run: ./build_macos_app.sh
+        env:
+          PYINSTALLER_TARGET_ARCH: ${{ matrix.arch }}
+          MOUSER_VERSION: ${{ github.ref_name }}
+          MOUSER_GIT_COMMIT: ${{ github.sha }}
+          MOUSER_GIT_DIRTY: 'false'
+      - run: cd dist && zip -r -y ../${{ matrix.archive }} Mouser.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+  release:
+    needs: macos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - run: gh release create "$TAG" *.zip --repo "$REPO" --title "$TAG" --notes 'Mouser 3.7.3 with mouse-held Command and Control actions on macOS. Ad-hoc signed; Accessibility permission may need to be granted again.'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
